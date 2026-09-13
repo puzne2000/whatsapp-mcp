@@ -462,6 +462,66 @@ outbox is `~/.local/share/whatsapp-mcp/outbox`, created on bridge startup. Move
 files there before calling `send_file` or `send_audio_message`, or set
 `WHATSAPP_MEDIA_ROOTS` to a colon-separated list of absolute directories.
 
+### Where runtime data is stored
+
+The bridge keeps its runtime state in a `store/` directory resolved **relative
+to its working directory**. There is no environment variable for this: launch
+the bridge from a different directory and it uses a `store/` there. That
+directory holds:
+
+| Path            | Contents                                                        |
+| --------------- | --------------------------------------------------------------- |
+| `whatsapp.db`   | whatsmeow session state, including the linked-device credentials |
+| `messages.db`   | full chat and message history                                    |
+| `<chat_jid>/`   | downloaded media — images, voice notes, documents                |
+| `.bridge-token` | the bridge's REST API bearer token                               |
+
+None of it is encrypted at rest. `whatsapp.db` holds the credentials for the
+linked-device session, so anyone who can read it can act as this WhatsApp
+device.
+
+> **Caution — cloud-synced folders:** if the repository is cloned inside a
+> folder synced by Google Drive, Dropbox, iCloud Drive, or OneDrive, the default
+> `store/` lands inside that folder, and the full message history and session
+> credentials are uploaded to that provider. Keeping the clone outside any
+> synced folder avoids this entirely.
+
+If the checkout has to live in a synced folder, put the runtime data elsewhere
+instead. Build the bridge binary once, then launch it from the directory that
+should hold `store/`:
+
+```bash
+cd whatsapp-bridge && go build -o whatsapp-bridge .
+
+mkdir -p ~/.local/share/whatsapp-mcp/runtime
+cd ~/.local/share/whatsapp-mcp/runtime
+/path/to/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
+```
+
+Then point the MCP server at the same location in your client config:
+
+```json
+"env": {
+  "WHATSAPP_DB_PATH": "/Users/you/.local/share/whatsapp-mcp/runtime/store/messages.db",
+  "WHATSMEOW_DB_PATH": "/Users/you/.local/share/whatsapp-mcp/runtime/store/whatsapp.db"
+}
+```
+
+`.bridge-token` is read from the directory containing `WHATSMEOW_DB_PATH`, so
+those two variables are enough — the token is picked up automatically.
+
+Two caveats:
+
+- The macOS launchd installer pins the bridge's `WorkingDirectory` to
+  `whatsapp-bridge/` inside the checkout, so the store stays in the repository.
+  Relocating it under launchd means pointing `WHATSAPP_BRIDGE_DIR` in
+  `~/Library/Application Support/whatsapp-mcp/launchd.env` at the new directory
+  (the health monitor reads the token relative to that same variable), and
+  re-applying the change whenever the installer is run again.
+- Relocating is not encryption. It keeps the data out of a sync client's reach,
+  but the files remain plaintext on disk. Placing the destination on an
+  encrypted volume adds protection if the machine or a backup is lost.
+
 ### Run automatically on macOS
 
 macOS users can install optional per-user `launchd` jobs that start the Go
