@@ -96,12 +96,20 @@ type ChatEphemeralSettings struct {
 	SettingTimestamp int64
 }
 
+func ensureOwnerOnlyDirectory(path string) error {
+	return os.MkdirAll(path, 0o700)
+}
+
+func writeOwnerOnlyFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o600)
+}
+
 // Initialize message store
 func NewMessageStore() (*MessageStore, error) {
 	// Create directory for database if it doesn't exist. Owner-only (0700):
 	// this holds session keys and full message history, so it shouldn't be
 	// group/other readable.
-	if err := os.MkdirAll("store", 0700); err != nil {
+	if err := ensureOwnerOnlyDirectory("store"); err != nil {
 		return nil, fmt.Errorf("failed to create store directory: %v", err)
 	}
 
@@ -2169,7 +2177,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 
 	// Create directory for the chat if it doesn't exist. Owner-only (0700):
 	// downloaded media can include private images/documents/voice notes.
-	if err := os.MkdirAll(chatDir, 0700); err != nil {
+	if err := ensureOwnerOnlyDirectory(chatDir); err != nil {
 		return false, "", "", "", fmt.Errorf("failed to create chat directory: %v", err)
 	}
 
@@ -2229,19 +2237,24 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	}
 
 	// Download the media using whatsmeow client
-	mediaData, err := client.Download(context.Background(), downloader)
+	mediaData, err := downloadMediaData(client, downloader)
 	if err != nil {
 		return false, "", "", "", fmt.Errorf("failed to download media: %v", err)
 	}
 
 	// Save the downloaded media to file. Owner-only (0600), same reasoning
 	// as the chat directory above.
-	if err := os.WriteFile(localPath, mediaData, 0600); err != nil {
+	if err := writeOwnerOnlyFile(localPath, mediaData); err != nil {
 		return false, "", "", "", fmt.Errorf("failed to save media file: %v", err)
 	}
 
 	fmt.Printf("Successfully downloaded %s media to %s (%d bytes)\n", mediaType, absPath, len(mediaData))
 	return true, mediaType, filename, absPath, nil
+}
+
+// downloadMediaData lets media persistence tests avoid a network request.
+var downloadMediaData = func(client *whatsmeow.Client, downloader *MediaDownloader) ([]byte, error) {
+	return client.Download(context.Background(), downloader)
 }
 
 // downloadMediaForMessage allows message-handling tests to verify whether a
@@ -2767,7 +2780,7 @@ func main() {
 
 	// Create directory for database if it doesn't exist. Owner-only (0700),
 	// same reasoning as NewMessageStore.
-	if err := os.MkdirAll("store", 0700); err != nil {
+	if err := ensureOwnerOnlyDirectory("store"); err != nil {
 		logger.Errorf("Failed to create store directory: %v", err)
 		return
 	}
